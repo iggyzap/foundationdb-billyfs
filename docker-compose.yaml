@@ -1,0 +1,12 @@
+version: "3.8"
+services:
+  fdb:
+    image: foundationdb/foundationdb:6.3.9
+    init: true
+    ports:
+    - target: 4500
+      published: 4500
+      protocol: tcp
+      mode: host
+    environment:
+        FDB_NETWORKING_MODE: host
