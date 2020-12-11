@@ -14,12 +14,17 @@ type FoundationDbFile struct {
 	protocolVersion int8
 }
 
+type filedata struct {
+	pos int64
+	len int64
+}
+
 var _ billy.File = FoundationDbFile{}
 
 // NewFile creates a struct
 func NewFile(fs FoundationDbFs, path string) (FoundationDbFile, error) {
 	// allocates new logical file
-	return FoundationDbFile{&fs, path, 0}, nil
+	return FoundationDbFile{fs: &fs, path: path}, nil
 }
 
 // Open does nothing

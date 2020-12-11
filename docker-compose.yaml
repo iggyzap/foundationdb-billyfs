@@ -10,3 +10,7 @@ services:
       mode: host
     environment:
         FDB_NETWORKING_MODE: host
+    volumes:
+        - /var/fdb/data
+        - /var/fdb/logs
+        - ${PWD}/config/fdb.cluster:/var/fdb/fdb.cluster

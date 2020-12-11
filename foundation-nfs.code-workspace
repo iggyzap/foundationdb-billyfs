@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "../go-nfs"
+		},
+		{
+			"name": "foundationdb-billyfs",
+			"path": "."
+		},
+		{
+			"path": "../../work/github-pulish"
+		}
+	],
+	"settings": {}
+}
