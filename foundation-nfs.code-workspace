@@ -11,5 +11,7 @@
 			"path": "../../work/github-pulish"
 		}
 	],
-	"settings": {}
+	"settings": {
+		"go.inferGopath": true
+	}
 }

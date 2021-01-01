@@ -1,7 +1,7 @@
 version: "3.8"
 services:
   fdb:
-    image: foundationdb/foundationdb:6.3.9
+    image: foundationdb/foundationdb:6.2.25
     init: true
     ports:
     - target: 4500
