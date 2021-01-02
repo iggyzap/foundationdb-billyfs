@@ -17,6 +17,10 @@ var _ billy.Basic = FoundationDbFs{}
 var _ billy.Dir = FoundationDbFs{}
 var _ billy.Capable = FoundationDbFs{}
 
+func init() {
+	fdb.APIVersion(620)
+}
+
 // NewFoundationDbFs Creates new FoundationDBFs
 func NewFoundationDbFs(clusterFile string) (FoundationDbFs, error) {
 	//fdb.setAPIVersion

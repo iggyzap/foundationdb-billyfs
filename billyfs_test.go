@@ -2,6 +2,8 @@ package billyfs
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"testing"
 	"time"
@@ -26,10 +28,11 @@ func TestOpenFs(t *testing.T) {
 		handleError(t)
 	}()
 
-	var dir = t.TempDir()
-	var filePath, err = startFdb(dir, t)
+	var filePath, err = startFdb(t)
 	checkError(err, "Failed starting fdb for %s", filePath)
 
+	//TODO: container starts, need to write cluster file to local FS so client can read it.
+	// or change API to pass file inline.
 	//var _, error = NewFoundationDbFs(filePath)
 	//checkError(error, "Failed creating Fs %s for %s", error, filePath)
 
@@ -63,7 +66,7 @@ const FOUNDATION_DB_CONTAINER string = "foundationdb/foundationdb:6.2.25"
 
 // Starts foundation db container for specific test run. Defers container removal when test is finished.
 // WORK in progress
-func startFdb(s string, t *testing.T) (string, error) {
+func startFdb(t *testing.T) (string, error) {
 	//github actions only support version 1.40
 	var cli, err = docker.NewClientWithOpts(client.WithVersion("1.40"))
 	checkError(err, "Failed to create docker client")
@@ -71,11 +74,17 @@ func startFdb(s string, t *testing.T) (string, error) {
 	//for large images image pull returns too quickly
 	pullImage(FOUNDATION_DB_CONTAINER, cli, t)
 
-	conf := container.Config{Image: FOUNDATION_DB_CONTAINER, ExposedPorts: nat.PortSet{"4500/tcp": {}}}
+	dbDef := "test:test@%s:%s"
+
+	conf := container.Config{
+		Image:        FOUNDATION_DB_CONTAINER,
+		ExposedPorts: nat.PortSet{"4500/tcp": {}},
+		Env: []string{fmt.Sprintf("%s=%s", "FDB_CLUSTER_FILE_CONTENTS", fmt.Sprintf(dbDef, "127.0.0.1", "4500")),
+			"FDB_NETWORKING_MODE=host"}}
 
 	cnt, err := cli.ContainerCreate(context.TODO(),
 		&conf,
-		&container.HostConfig{},
+		&container.HostConfig{PortBindings: nat.PortMap{"4500/tcp": {{HostPort: ""}}}},
 		&network.NetworkingConfig{},
 		nil,
 		t.Name())
@@ -92,11 +101,32 @@ func startFdb(s string, t *testing.T) (string, error) {
 
 	//run DB init with file. optionally supply different entry point.
 
-	return "nil", nil
+	json, err := cli.ContainerInspect(context.TODO(), cnt.ID)
+	checkError(err, "Failed to inspect container %s", cnt.ID)
+
+	t.Logf("Started container info: %+v\n", json)
+
+	if !json.State.Running {
+		checkError(fmt.Errorf("Container %s is not running. State: %s", cnt.ID, json.State.Status), "")
+	}
+
+	ports := json.NetworkSettings.Ports["4500/tcp"]
+
+	return fmt.Sprintf(dbDef, "127.0.0.1", ports[0].HostPort), nil
+}
+
+type Loggly interface {
+	Log(args ...interface{})
+	Logf(fmt string, args ...interface{})
+}
+
+type Imagy interface {
+	ImagePull(ctx context.Context, imageDef string, options types.ImagePullOptions) (io.ReadCloser, error)
+	ImageList(ctx context.Context, options types.ImageListOptions) ([]types.ImageSummary, error)
 }
 
 //this func will panic if pulling fails, and wait a bit if image is too large to be pulled quickly
-func pullImage(imageDef string, cli *docker.Client, t *testing.T) {
+func pullImage(imageDef string, cli Imagy, t Loggly) {
 	//for large images image pull returns too quickly
 
 	t.Logf("Pulling image %s", imageDef)
