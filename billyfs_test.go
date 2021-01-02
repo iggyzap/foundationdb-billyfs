@@ -4,9 +4,11 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	docker "github.com/docker/docker/client"
@@ -57,6 +59,8 @@ func checkError(err error, s string, args ...interface{}) {
 	}
 }
 
+const FOUNDATION_DB_CONTAINER string = "foundationdb/foundationdb:6.2.25"
+
 // Starts foundation db container for specific test run. Defers container removal when test is finished.
 // WORK in progress
 func startFdb(s string, t *testing.T) (string, error) {
@@ -64,11 +68,10 @@ func startFdb(s string, t *testing.T) (string, error) {
 	var cli, err = docker.NewClientWithOpts(client.WithVersion("1.40"))
 	checkError(err, "Failed to create docker client")
 
-	resp, err := cli.ImagePull(context.TODO(), "foundationdb/foundationdb:6.2.25", types.ImagePullOptions{})
-	checkError(err, "Failed to pull image")
-	defer resp.Close()
+	//for large images image pull returns too quickly
+	pullImage(FOUNDATION_DB_CONTAINER, cli, t)
 
-	conf := container.Config{Image: "foundationdb/foundationdb:6.2.25", ExposedPorts: nat.PortSet{"4500/tcp": {}}}
+	conf := container.Config{Image: FOUNDATION_DB_CONTAINER, ExposedPorts: nat.PortSet{"4500/tcp": {}}}
 
 	cnt, err := cli.ContainerCreate(context.TODO(),
 		&conf,
@@ -90,6 +93,38 @@ func startFdb(s string, t *testing.T) (string, error) {
 	//run DB init with file. optionally supply different entry point.
 
 	return "nil", nil
+}
+
+//this func will panic if pulling fails, and wait a bit if image is too large to be pulled quickly
+func pullImage(imageDef string, cli *docker.Client, t *testing.T) {
+	//for large images image pull returns too quickly
+
+	t.Logf("Pulling image %s", imageDef)
+	resp, err := cli.ImagePull(context.TODO(), imageDef, types.ImagePullOptions{})
+	checkError(err, "Failed to pull image %s", imageDef)
+	defer resp.Close()
+	args := filters.NewArgs(filters.KeyValuePair{Key: "reference", Value: imageDef})
+	firstTime := false
+
+	for {
+		list, err := cli.ImageList(
+			context.TODO(),
+			types.ImageListOptions{
+				All:     false,
+				Filters: args})
+		checkError(err, "Failed listing images")
+		if len(list) > 0 {
+			break
+		}
+		if firstTime {
+			firstTime = false
+			t.Logf("Waiting for image %s to be pulled ", imageDef)
+		} else {
+			t.Log(".")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Logf("Image %s pulled", imageDef)
 }
 
 func killFdb() {
