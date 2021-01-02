@@ -18,6 +18,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestOpenFs(t *testing.T) {
+	//defer below fails under linux
 	defer handleError(t)
 
 	var dir = t.TempDir()
@@ -31,8 +32,14 @@ func TestOpenFs(t *testing.T) {
 
 //this function catches panic and signals to testing framework that test have failed
 func handleError(t *testing.T) {
+
 	if r := recover(); r != nil {
+
 		if err, ok := r.(error); ok {
+			if t == nil {
+				panic(pkg_errors.WithMessage(err, "Testing pointer is nil"))
+			}
+
 			t.Error(err)
 
 		} else {
