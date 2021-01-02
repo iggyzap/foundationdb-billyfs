@@ -8,6 +8,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
 	docker "github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	pkg_errors "github.com/pkg/errors"
@@ -59,7 +60,8 @@ func checkError(err error, s string, args ...interface{}) {
 // Starts foundation db container for specific test run. Defers container removal when test is finished.
 // WORK in progress
 func startFdb(s string, t *testing.T) (string, error) {
-	var cli, err = docker.NewClientWithOpts()
+	//github actions only support version 1.40
+	var cli, err = docker.NewClientWithOpts(client.WithVersion("1.40"))
 	checkError(err, "Failed to create docker client")
 
 	resp, err := cli.ImagePull(context.TODO(), "foundationdb/foundationdb:6.2.25", types.ImagePullOptions{})
