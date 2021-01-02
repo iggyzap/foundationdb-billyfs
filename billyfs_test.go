@@ -19,7 +19,9 @@ func TestMain(m *testing.M) {
 
 func TestOpenFs(t *testing.T) {
 	//defer below fails under linux
-	defer handleError(t)
+	defer func() {
+		handleError(t)
+	}()
 
 	var dir = t.TempDir()
 	var filePath, err = startFdb(dir, t)
