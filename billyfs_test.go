@@ -63,8 +63,8 @@ func startFdb(s string, t *testing.T) (string, error) {
 	checkError(err, "Failed to create docker client")
 
 	resp, err := cli.ImagePull(context.TODO(), "foundationdb/foundationdb:6.2.25", types.ImagePullOptions{})
-	defer resp.Close()
 	checkError(err, "Failed to pull image")
+	defer resp.Close()
 
 	conf := container.Config{Image: "foundationdb/foundationdb:6.2.25", ExposedPorts: nat.PortSet{"4500/tcp": {}}}
 
