@@ -1,9 +1,14 @@
 package billyfs
 
 import (
+	"fmt"
 	"os"
+	"path"
+	"strings"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
+
 	"github.com/go-git/go-billy/v5"
 )
 
@@ -36,13 +41,45 @@ func NewFoundationDbFs(clusterFile string) (FoundationDbFs, error) {
 //billy.Dir methods
 
 // MkdirAll creates full path
-func (FoundationDbFs) MkdirAll(path string, perm os.FileMode) error {
-	return nil
+func (fs FoundationDbFs) MkdirAll(path string, perm os.FileMode) error {
+	fsPath := fs.split(path)
+
+	//TODO : add meta key to preserve file info
+	_, err := fs.db.Transact(func(w fdb.Transaction) (interface{}, error) {
+
+		return directory.CreateOrOpen(w, fsPath, nil)
+	})
+
+	return err
 }
 
 // ReadDir returns all file entries in a pth
-func (FoundationDbFs) ReadDir(path string) ([]os.FileInfo, error) {
-	return nil, nil
+func (fs FoundationDbFs) ReadDir(path string) ([]os.FileInfo, error) {
+	fsPath := fs.split(path)
+	list, err := fs.db.ReadTransact(func(r fdb.ReadTransaction) (interface{}, error) {
+		entries, err := directory.List(r, fsPath)
+		if err != nil {
+			return nil, err
+		}
+
+		result := make([]os.FileInfo, len(entries))
+		for i := range entries {
+			result[i] = dirFileInfo{entries[i]}
+		}
+
+		return result, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	slice, ok := list.([]os.FileInfo)
+	if !ok {
+		return nil, fmt.Errorf("Failed converting to slice %v", list)
+	}
+
+	return slice, nil
 }
 
 //billy.Basic methods
@@ -56,6 +93,30 @@ func (fs FoundationDbFs) Open(path string) (billy.File, error) {
 func (fs FoundationDbFs) Create(path string) (billy.File, error) {
 
 	return fs.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+}
+
+func (fs FoundationDbFs) split(in string) []string {
+	//need to add normalisation
+	clean := path.Clean(in)
+	return fs.norm(strings.Split(clean, "/"))
+}
+
+func (FoundationDbFs) norm(in []string) []string {
+
+	//we don't want to have empty strings in path array
+	if in == nil {
+		return nil
+	}
+
+	result := []string{}
+
+	for i := range in {
+		if in[i] != "" {
+			result = append(result, in[i])
+		}
+	}
+
+	return result
 }
 
 // OpenFile full fledged call
@@ -86,7 +147,7 @@ func (FoundationDbFs) Stat(path string) (os.FileInfo, error) {
 
 // Join joins path
 func (FoundationDbFs) Join(arr ...string) string {
-	return ""
+	return path.Join(arr...)
 }
 
 //billy.Capable methods

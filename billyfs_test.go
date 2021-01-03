@@ -17,28 +17,61 @@ import (
 	docker "github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	pkg_errors "github.com/pkg/errors"
+	"github.com/stretchr/testify/suite"
 )
 
-func TestMain(m *testing.M) {
-	os.Exit(m.Run())
+type FsTestSuite struct {
+	suite.Suite
+	fdbfs *FoundationDbFs
+	t     *testing.T
 }
 
-func TestOpenFs(t *testing.T) {
-	//defer below fails under linux
+func (s *FsTestSuite) SetupSuite() {
+	s.t = s.T()
 	defer func() {
-		handleError(t)
+		handleError(s.T())
 	}()
 
-	var filePath, err = startFdb(t)
+	var filePath, err = startFdb(s.t)
 	checkError(err, "Failed starting fdb for %s", filePath)
-	t.Cleanup(func() {
+	s.t.Cleanup(func() {
 		os.Remove(filePath)
 	})
 
-	//TODO: container starts, need to write cluster file to local FS so client can read it.
-	// or change API to pass file inline.
-	var _, error = NewFoundationDbFs(filePath)
+	var fdbFs, error = NewFoundationDbFs(filePath)
 	checkError(error, "Failed creating Fs %s for %s", error, filePath)
+
+	s.fdbfs = &fdbFs
+}
+
+func (s *FsTestSuite) TearDownSuite() {
+
+}
+
+func TestMain(t *testing.T) {
+	suite.Run(t, new(FsTestSuite))
+}
+
+func (s *FsTestSuite) TestFsCreated() {
+	s.Require().NotEmpty(s.fdbfs, "File system should be created")
+}
+
+func (s *FsTestSuite) TestByDefaultNoDirs() {
+
+	files, err := s.fdbfs.ReadDir("/")
+	s.Empty(err, "Should return no error")
+	s.Empty(files, "No directories present")
+}
+
+func (s *FsTestSuite) TestCanCreateDirAndSeesIt() {
+	err := s.fdbfs.MkdirAll("/foo", os.ModeDir|os.ModePerm)
+	s.Assert().Empty(err, "Mkdir success")
+	files, err := s.fdbfs.ReadDir("/")
+	s.Empty(err, "Should return no error")
+	s.Len(files, 1, "Should contain just %s dirs", 1)
+	s.Condition(func() bool {
+		return files[0].Name() == "foo" && files[0].IsDir()
+	}, "should contain dir")
 
 }
 
@@ -75,7 +108,6 @@ func startFdb(t *testing.T) (string, error) {
 	var cli, err = docker.NewClientWithOpts(client.WithVersion("1.40"))
 	checkError(err, "Failed to create docker client")
 
-	//for large images image pull returns too quickly
 	pullImage(FOUNDATION_DB_CONTAINER, cli, t)
 
 	dbDef := "test:test@%s:%s"
@@ -88,7 +120,7 @@ func startFdb(t *testing.T) (string, error) {
 
 	cnt, err := cli.ContainerCreate(context.TODO(),
 		&conf,
-		&container.HostConfig{PortBindings: nat.PortMap{"4500/tcp": {{HostPort: ""}}}},
+		&container.HostConfig{PortBindings: nat.PortMap{"4500/tcp": {{HostPort: "4500"}}}},
 		&network.NetworkingConfig{},
 		nil,
 		t.Name())
@@ -104,6 +136,10 @@ func startFdb(t *testing.T) (string, error) {
 	checkError(err, "Failed to start container %s", cnt.ID)
 
 	//run DB init with file. optionally supply different entry point.
+	id, err := cli.ContainerExecCreate(context.TODO(), cnt.ID, types.ExecConfig{Cmd: []string{"fdbcli", "--exec", "configure new single ssd ; status"}})
+	checkError(err, "Unable to create execution to init DB")
+	err = cli.ContainerExecStart(context.TODO(), id.ID, types.ExecStartCheck{})
+	checkError(err, "Unable to init db")
 
 	json, err := cli.ContainerInspect(context.TODO(), cnt.ID)
 	checkError(err, "Failed to inspect container %s", cnt.ID)
@@ -148,6 +184,8 @@ func pullImage(imageDef string, cli Imagy, t Loggly) {
 	args := filters.NewArgs(filters.KeyValuePair{Key: "reference", Value: imageDef})
 	firstTime := false
 
+	//TODO: there is alternative to listen to docker events for image, then wait by millis is not required.
+	// LATER.
 	for {
 		list, err := cli.ImageList(
 			context.TODO(),
