@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"testing"
 	"time"
@@ -30,11 +31,14 @@ func TestOpenFs(t *testing.T) {
 
 	var filePath, err = startFdb(t)
 	checkError(err, "Failed starting fdb for %s", filePath)
+	t.Cleanup(func() {
+		os.Remove(filePath)
+	})
 
 	//TODO: container starts, need to write cluster file to local FS so client can read it.
 	// or change API to pass file inline.
-	//var _, error = NewFoundationDbFs(filePath)
-	//checkError(error, "Failed creating Fs %s for %s", error, filePath)
+	var _, error = NewFoundationDbFs(filePath)
+	checkError(error, "Failed creating Fs %s for %s", error, filePath)
 
 }
 
@@ -111,8 +115,16 @@ func startFdb(t *testing.T) (string, error) {
 	}
 
 	ports := json.NetworkSettings.Ports["4500/tcp"]
+	file, err := ioutil.TempFile(t.TempDir(), "fdb-cluster-*.conf")
+	checkError(err, "Failed to create fdb file")
+	str := fmt.Sprintf(dbDef, "127.0.0.1", ports[0].HostPort)
+	written, err := file.WriteString(str)
+	checkError(err, "Failed to write to cluster file %s content '%s'", file.Name(), str)
+	if len(str) != written {
+		checkError(fmt.Errorf("Wrote wrong number of bytes, expected %d wrote %d", len(str), written), "")
+	}
 
-	return fmt.Sprintf(dbDef, "127.0.0.1", ports[0].HostPort), nil
+	return file.Name(), nil
 }
 
 type Loggly interface {
