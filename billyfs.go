@@ -1,7 +1,11 @@
 package billyfs
 
 import (
+	"encoding/binary"
 	"fmt"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
+	pkg_errors "github.com/pkg/errors"
 	"os"
 	"path"
 	"strings"
@@ -42,15 +46,73 @@ func NewFoundationDbFs(clusterFile string) (FoundationDbFs, error) {
 
 // MkdirAll creates full path
 func (fs FoundationDbFs) MkdirAll(path string, perm os.FileMode) error {
-	fsPath := fs.split(path)
 
 	//TODO : add meta key to preserve file info
-	_, err := fs.db.Transact(func(w fdb.Transaction) (interface{}, error) {
+	_, err := fs.createOrGet(path, &fileModeApplicator{perm, nil})
 
-		return directory.CreateOrOpen(w, fsPath, nil)
-	})
+	if err != nil {
+		return pkg_errors.Wrap(err, "failed_on_mkdirall")
+	}
 
 	return err
+}
+
+type fileModeApplicator struct {
+	perm       os.FileMode
+	permAsByte []byte
+}
+
+func (p *fileModeApplicator) visit(w fdb.Transaction, step *opResult) {
+	if step.wasCreated {
+		if p.permAsByte == nil {
+			p.permAsByte = make([]byte, 4)
+			binary.LittleEndian.PutUint32(p.permAsByte, uint32(p.perm))
+		}
+		w.Set(step.Pack(tuple.Tuple{0xFC, 0x00}), p.permAsByte)
+	}
+}
+
+type opResult struct {
+	subspace.Subspace
+	wasCreated bool
+}
+
+type SpaceVisitor interface {
+	visit(w fdb.Transaction, result *opResult)
+}
+
+func (fs *FoundationDbFs) createOrGet(path string, txSpaceVisitor SpaceVisitor) (*opResult, error) {
+	subSpace, err := fs.db.Transact(func(w fdb.Transaction) (interface{}, error) {
+		fsPath := fs.split(path)
+
+		once, err := directory.Exists(w, fsPath)
+		if err != nil {
+			return nil, err
+		}
+		created, err := directory.CreateOrOpen(w, fsPath, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		dang := &opResult{
+			Subspace:   created,
+			wasCreated: !once,
+		}
+
+		//in reality this visitor have to be called for every node in path, since we need to
+		// apply txSpaceVisitor per subspace
+		if txSpaceVisitor != nil {
+			txSpaceVisitor.visit(w, dang)
+		}
+
+		return dang, nil
+	})
+
+	if err != nil {
+		return nil, pkg_errors.WithMessagef(err, "Unable to obtain subspace %s", path)
+	}
+
+	return subSpace.(*opResult), nil
 }
 
 // ReadDir returns all file entries in a pth
@@ -63,6 +125,8 @@ func (fs FoundationDbFs) ReadDir(path string) ([]os.FileInfo, error) {
 		}
 
 		result := make([]os.FileInfo, len(entries))
+		//below is bad, since we have to read all entries for path!
+		// it's not that bad, since entries are last element, so we need to just construct subspace and unpack
 		for i := range entries {
 			result[i] = dirFileInfo{entries[i]}
 		}
@@ -95,7 +159,7 @@ func (fs FoundationDbFs) Create(path string) (billy.File, error) {
 	return fs.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
 }
 
-func (fs FoundationDbFs) split(in string) []string {
+func (fs *FoundationDbFs) split(in string) []string {
 	//need to add normalisation
 	clean := path.Clean(in)
 	return fs.norm(strings.Split(clean, "/"))
@@ -108,7 +172,7 @@ func (FoundationDbFs) norm(in []string) []string {
 		return nil
 	}
 
-	result := []string{}
+	var result []string
 
 	for i := range in {
 		if in[i] != "" {

@@ -48,7 +48,7 @@ func (s *FsTestSuite) TearDownSuite() {
 
 }
 
-func TestMain(t *testing.T) {
+func TestEntry(t *testing.T) {
 	suite.Run(t, new(FsTestSuite))
 }
 
