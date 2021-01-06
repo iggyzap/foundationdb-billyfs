@@ -7,6 +7,7 @@ import (
 
 type dirFileInfo struct {
 	name string
+	mode os.FileMode
 }
 
 func (dirFileInfo) IsDir() bool {
@@ -15,8 +16,8 @@ func (dirFileInfo) IsDir() bool {
 func (dirFileInfo) ModTime() time.Time {
 	return time.Now()
 }
-func (dirFileInfo) Mode() os.FileMode {
-	return os.ModeDir | os.ModePerm
+func (d dirFileInfo) Mode() os.FileMode {
+	return d.mode
 }
 func (d dirFileInfo) Name() string {
 	return d.name

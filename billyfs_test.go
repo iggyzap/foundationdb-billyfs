@@ -75,6 +75,32 @@ func (s *FsTestSuite) TestCanCreateDirAndSeesIt() {
 
 }
 
+func (s *FsTestSuite) TestFewNestedDirs() {
+	s.fdbfs.MkdirAll("/foo/bar", os.ModeDir|os.ModePerm)
+	s.fdbfs.MkdirAll("/foo/baz", os.ModeDir|os.ModePerm)
+
+	files, err := s.fdbfs.ReadDir("/foo")
+	s.Empty(err, "Should return no error")
+
+	names := make([]string, len(files))
+	for i := range files {
+		names[i] = files[i].Name()
+	}
+
+	s.ElementsMatch(names, []string{"bar", "baz"})
+}
+
+func (s *FsTestSuite) TestPathDeep() {
+	err := s.fdbfs.MkdirAll("/foo/bar/baz", os.ModeDir|os.ModePerm)
+	s.Assert().Empty(err, "Mkdir success")
+
+	info, err := s.fdbfs.Stat("/foo/bar/baz")
+
+	s.Assert().Equal(os.ModeDir|os.ModePerm, info.Mode())
+	s.Assert().Equal("baz", info.Name())
+
+}
+
 //this function catches panic and signals to testing framework that test have failed
 func handleError(t *testing.T) {
 

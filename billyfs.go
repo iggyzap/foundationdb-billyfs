@@ -82,37 +82,45 @@ type SpaceVisitor interface {
 }
 
 func (fs *FoundationDbFs) createOrGet(path string, txSpaceVisitor SpaceVisitor) (*opResult, error) {
-	subSpace, err := fs.db.Transact(func(w fdb.Transaction) (interface{}, error) {
-		fsPath := fs.split(path)
 
-		once, err := directory.Exists(w, fsPath)
+	fsPath := fs.split(path)
+
+	var out interface{}
+	var err error
+
+	for i := range fsPath {
+		out, err = fs.db.Transact(func(w fdb.Transaction) (interface{}, error) {
+			path := fsPath[0 : i+1]
+			once, err := directory.Exists(w, path)
+			if err != nil {
+				return nil, err
+			}
+			created, err := directory.CreateOrOpen(w, path, nil)
+			if err != nil {
+				return nil, err
+			}
+
+			dang := &opResult{
+				Subspace:   created,
+				wasCreated: !once,
+			}
+
+			//in reality this visitor have to be called for every node in path, since we need to
+			// apply txSpaceVisitor per subspace
+			if txSpaceVisitor != nil {
+				txSpaceVisitor.visit(w, dang)
+			}
+
+			return dang, nil
+		})
+
 		if err != nil {
-			return nil, err
-		}
-		created, err := directory.CreateOrOpen(w, fsPath, nil)
-		if err != nil {
-			return nil, err
+			return nil, pkg_errors.WithMessagef(err, "Unable to obtain subspace %s", path)
 		}
 
-		dang := &opResult{
-			Subspace:   created,
-			wasCreated: !once,
-		}
-
-		//in reality this visitor have to be called for every node in path, since we need to
-		// apply txSpaceVisitor per subspace
-		if txSpaceVisitor != nil {
-			txSpaceVisitor.visit(w, dang)
-		}
-
-		return dang, nil
-	})
-
-	if err != nil {
-		return nil, pkg_errors.WithMessagef(err, "Unable to obtain subspace %s", path)
 	}
 
-	return subSpace.(*opResult), nil
+	return out.(*opResult), nil
 }
 
 // ReadDir returns all file entries in a pth
@@ -127,8 +135,10 @@ func (fs FoundationDbFs) ReadDir(path string) ([]os.FileInfo, error) {
 		result := make([]os.FileInfo, len(entries))
 		//below is bad, since we have to read all entries for path!
 		// it's not that bad, since entries are last element, so we need to just construct subspace and unpack
+		node, err := nodeOrRoot(r, fsPath)
 		for i := range entries {
-			result[i] = dirFileInfo{entries[i]}
+			result[i], err = stat(r, node, entries[i])
+
 		}
 
 		return result, nil
@@ -144,6 +154,33 @@ func (fs FoundationDbFs) ReadDir(path string) ([]os.FileInfo, error) {
 	}
 
 	return slice, nil
+}
+
+func nodeOrRoot(r fdb.ReadTransaction, p []string) (directory.Directory, error) {
+	var node directory.Directory
+	var err error
+	if len(p) == 0 {
+		node = directory.Root()
+	} else {
+		node, err = directory.Open(r, p, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return node, nil
+
+}
+
+func stat(r fdb.ReadTransaction, p directory.Directory, n string) (os.FileInfo, error) {
+	entry, err := p.Open(r, []string{n}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	bytes := r.Get(entry.Pack(tuple.Tuple{0xFC, 0x00})).MustGet()
+
+	return dirFileInfo{n, os.FileMode(binary.LittleEndian.Uint32(bytes))}, nil
 }
 
 //billy.Basic methods
@@ -205,8 +242,29 @@ func (FoundationDbFs) Rename(from string, to string) error {
 }
 
 // Stat obtains file meta
-func (FoundationDbFs) Stat(path string) (os.FileInfo, error) {
-	return nil, nil
+func (fs FoundationDbFs) Stat(path string) (os.FileInfo, error) {
+	fsPath := fs.split(path)
+
+	if len(fsPath) == 0 {
+		return dirFileInfo{name: "/", mode: os.ModeDir | os.ModePerm}, nil
+	}
+
+	stat, err := fs.db.ReadTransact(func(r fdb.ReadTransaction) (interface{}, error) {
+
+		ind := len(fsPath) - 1
+		node, err := nodeOrRoot(r, fsPath[0:ind])
+
+		if err != nil {
+			return nil, err
+		}
+
+		return stat(r, node, fsPath[ind])
+
+	})
+	if err != nil {
+		return nil, err
+	}
+	return stat.(os.FileInfo), nil
 }
 
 // Join joins path
