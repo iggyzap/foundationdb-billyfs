@@ -1,8 +1,6 @@
 package billyfs
 
 import (
-	"os"
-
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/go-git/go-billy/v5"
 )
@@ -12,6 +10,7 @@ type FoundationDbFile struct {
 	fs              *FoundationDbFs
 	path            string
 	protocolVersion int8
+	data            filedata
 }
 
 type filedata struct {
@@ -22,16 +21,16 @@ type filedata struct {
 var _ billy.File = FoundationDbFile{}
 
 // NewFile creates a struct
-func NewFile(fs FoundationDbFs, path string) (FoundationDbFile, error) {
+func NewFile(fs *FoundationDbFs, path string) (FoundationDbFile, error) {
 	// allocates new logical file
-	return FoundationDbFile{fs: &fs, path: path}, nil
+	return FoundationDbFile{fs: fs, path: path}, nil
 }
 
 // Open does nothing
 //does nothing. Need to initialise attrs
-func (file FoundationDbFile) Open(flag int, perm os.FileMode) (billy.File, error) {
-	return file, nil
-}
+//func (file FoundationDbFile) Open(flag int, perm os.FileMode) (billy.File, error) {
+//	return file, nil
+//}
 
 func (FoundationDbFile) Read(p []byte) (n int, err error) {
 	//not supported for nfs

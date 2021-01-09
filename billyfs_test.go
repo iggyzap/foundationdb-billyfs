@@ -90,6 +90,17 @@ func (s *FsTestSuite) TestFewNestedDirs() {
 	s.ElementsMatch(names, []string{"bar", "baz"})
 }
 
+func (s *FsTestSuite) TestDeleteDir() {
+	s.fdbfs.MkdirAll("/foo/bar", os.ModeDir|os.ModePerm)
+	err := s.fdbfs.Remove("/foo/bar")
+	s.Empty(err, "No Error")
+
+	files, err := s.fdbfs.ReadDir("/foo")
+	s.Empty(err, "Should return no error")
+
+	s.Equal(0, len(files), "No files in dir /foo")
+}
+
 func (s *FsTestSuite) TestPathDeep() {
 	err := s.fdbfs.MkdirAll("/foo/bar/baz", os.ModeDir|os.ModePerm)
 	s.Assert().Empty(err, "Mkdir success")

@@ -223,17 +223,19 @@ func (FoundationDbFs) norm(in []string) []string {
 // OpenFile full fledged call
 func (fs FoundationDbFs) OpenFile(path string, flag int, perm os.FileMode) (billy.File, error) {
 
-	file, error := NewFile(fs, path)
-	if error == nil {
-		return file.Open(flag, perm)
-	}
-
-	return file, error
+	return NewFile(&fs, path)
 }
 
 // Remove deletes path
-func (FoundationDbFs) Remove(path string) error {
-	return nil
+func (fs FoundationDbFs) Remove(path string) error {
+
+	fsPath := fs.split(path)
+
+	_, err := fs.db.Transact(func(tx fdb.Transaction) (interface{}, error) {
+		return directory.Root().Remove(tx, fsPath)
+	})
+
+	return err
 }
 
 // Rename renames path
