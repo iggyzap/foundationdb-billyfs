@@ -1,16 +1,22 @@
 package billyfs
 
 import (
+	"fmt"
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	"github.com/go-git/go-billy/v5"
+	"io"
+	"os"
+	"path/filepath"
 )
 
 // FoundationDbFile represents a file in foundation db
 type FoundationDbFile struct {
 	fs              *FoundationDbFs
-	path            string
+	sp              *directory.DirectorySubspace
 	protocolVersion int8
-	data            filedata
+	data            *filedata
 }
 
 type filedata struct {
@@ -18,12 +24,26 @@ type filedata struct {
 	len int64
 }
 
-var _ billy.File = FoundationDbFile{}
+var _ billy.File = &FoundationDbFile{}
 
 // NewFile creates a struct
-func NewFile(fs *FoundationDbFs, path string) (FoundationDbFile, error) {
+func NewFile(fs *FoundationDbFs, path string, flag int, perm os.FileMode) (*FoundationDbFile, error) {
 	// allocates new logical file
-	return FoundationDbFile{fs: fs, path: path}, nil
+	file, err := fs.db.ReadTransact(func(t fdb.ReadTransaction) (interface{}, error) {
+		node, err := nodeOrRoot(t, fs.split(path))
+		if err != nil {
+			return nil, err
+		}
+
+		if sp, ok := node.(directory.DirectorySubspace); !ok {
+			return nil, fmt.Errorf("can_not_open_root")
+		} else {
+			return &FoundationDbFile{fs: fs, sp: &sp, data: &filedata{}}, nil
+		}
+
+	})
+
+	return file.(*FoundationDbFile), err
 }
 
 // Open does nothing
@@ -32,69 +52,102 @@ func NewFile(fs *FoundationDbFs, path string) (FoundationDbFile, error) {
 //	return file, nil
 //}
 
-func (FoundationDbFile) Read(p []byte) (n int, err error) {
-	//not supported for nfs
+func (f *FoundationDbFile) Read(p []byte) (n int, err error) {
+	// difference between readat and read is one of multiple stupid brain farts of go.
+	// no consistency of the language.
+	n, err = f.ReadAt(p, f.data.pos)
+	if n > 0 {
+		f.data.pos += int64(n)
+	}
+	return n, err
+}
+
+const rEADSIZE int64 = 1024
+
+// Write writes bytes in write position. Stateful!
+func (*FoundationDbFile) Write(p []byte) (int, error) {
+
 	return 0, nil
 }
 
-const rEADSIZE int16 = 4096
+func findPosition(off int64) (key tuple.Tuple, upperBound tuple.Tuple, bucketStart int) {
+	var startBucket = off / rEADSIZE
+	var bucketOffset = int(off % rEADSIZE)
 
-func findDataKey(path string, offset int64) string {
-	return ""
+	return tuple.Tuple{0xFD, 0x00, startBucket}, tuple.Tuple{0xFD, 0x01}, bucketOffset
 }
 
-// Write writes bytes in write postion. Stateful!
-func (FoundationDbFile) Write(p []byte) (int, error) {
-
-	return 0, nil
+type readOp struct {
+	slice   fdb.KeyValue
+	hasMore bool
 }
 
 // ReadAt function that is directly compatible with stateless NFS
-func (file FoundationDbFile) ReadAt(p []byte, off int64) (d int, e error) {
+func (f *FoundationDbFile) ReadAt(p []byte, off int64) (d int, e error) {
+	var tuPack, up, slice = findPosition(off)
+	key := (*f.sp).Pack(tuPack)
+	upper := (*f.sp).Pack(up)
 
-	tmp, error := file.fs.db.ReadTransact(func(tx fdb.ReadTransaction) (interface{}, error) {
-		return tx.Get(fdb.Key(findDataKey(file.path, off))).MustGet(), nil
+	read, err := f.fs.db.ReadTransact(func(tx fdb.ReadTransaction) (interface{}, error) {
+		rr := tx.GetRange(
+			fdb.KeyRange{key, upper},
+			fdb.RangeOptions{2, fdb.StreamingModeExact, false})
+		kv, err := rr.GetSliceWithError()
+		if err != nil {
+			return nil, err
+		}
+
+		//given semantics of readrange we don't need to store file size
+		// on fs. TO obtain file size we'll get firs end-most bucket and get its length.
+		// then file size will be lastBucket * rEADSIZE + len(lastBucket)
+		return readOp{slice: kv[0], hasMore: len(kv) > 1}, nil
 	})
 
-	if error != nil {
-		return 0, error
+	bytes := read.(readOp).slice.Value
+	//in case passed offset off does not hit start of the bucket, we have to read from position
+	bytes = bytes[slice:]
+
+	//todo return EOF. funky!
+	d = copy(bytes, p)
+	if err == nil {
+		//check for EOF condition
+		// if we fully transferred bytes from last available bucket
+		if d == len(bytes) && !read.(readOp).hasMore {
+			err = io.EOF
+		}
 	}
 
-	if tmp != nil {
-		return copy(tmp.([]byte), p), nil
-	}
-
-	return 0, nil
+	return d, err
 }
 
 // Seek is not compatible with NFSv3 Only makes sense in context of writing because Write is stateful
-func (FoundationDbFile) Seek(offset int64, i int) (int64, error) {
+func (*FoundationDbFile) Seek(offset int64, i int) (int64, error) {
 	return 0, nil
 }
 
 // Truncate truncates file
-func (FoundationDbFile) Truncate(size int64) error {
+func (*FoundationDbFile) Truncate(size int64) error {
 	return nil
 }
 
 // Close have no meaning in NFSv3
-func (FoundationDbFile) Close() error {
+func (*FoundationDbFile) Close() error {
 	//does nothing
 
 	return nil
 }
 
 // Lock is not supported
-func (FoundationDbFile) Lock() error {
+func (*FoundationDbFile) Lock() error {
 	return nil
 }
 
 // Unlock is not supported
-func (FoundationDbFile) Unlock() error {
+func (*FoundationDbFile) Unlock() error {
 	return nil
 }
 
 // Name returns file name
-func (file FoundationDbFile) Name() string {
-	return file.path
+func (f *FoundationDbFile) Name() string {
+	return filepath.Join((*f.sp).GetPath()...)
 }

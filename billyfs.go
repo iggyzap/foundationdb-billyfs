@@ -223,7 +223,7 @@ func (FoundationDbFs) norm(in []string) []string {
 // OpenFile full fledged call
 func (fs FoundationDbFs) OpenFile(path string, flag int, perm os.FileMode) (billy.File, error) {
 
-	return NewFile(&fs, path)
+	return NewFile(&fs, path, flag, perm)
 }
 
 // Remove deletes path
