@@ -65,7 +65,73 @@ func (f *FoundationDbFile) Read(p []byte) (n int, err error) {
 const rEADSIZE int64 = 1024
 
 // Write writes bytes in write position. Stateful!
-func (*FoundationDbFile) Write(p []byte) (int, error) {
+func (f *FoundationDbFile) Write(p []byte) (int, error) {
+
+	written, err := f.WriteAt(p, f.data.pos)
+	if written > 0 {
+		f.data.pos += int64(written)
+	}
+
+	return written, err
+
+}
+
+type writeOp struct {
+	what     []byte
+	key      tuple.Tuple
+	offset   int
+	pageSize int
+}
+
+//this function splits given byte slice into number of write operations
+func AsWriteOps(p []byte, off int64, writeSize int) (stream []writeOp) {
+	stream = make([]writeOp, len(p)/writeSize+1)
+
+	for i := range stream {
+		loSet := off + int64(i*writeSize)
+
+		key, _, start := findPosition(loSet)
+
+		//most likely calculations for start / end are slightly off
+
+		end := (i+1)*writeSize - start
+		if end > len(p) {
+			end = len(p)
+		}
+		stream[i] = writeOp{p[i*writeSize : end], key, start, writeSize}
+	}
+
+	return stream
+}
+
+func (f *FoundationDbFile) WriteAt(p []byte, off int64) (int, error) {
+
+	//unfortunately if off misses exact bucket start, we incur penalty of read-before-write, since we
+	// have to set only changed bytes in a target bucket
+	// alternatively, slice p[] with offset off can be represented as a stream of slices ,
+	//  which will have bucket key, offset and length to write less or equal than bucket size
+	var written int = 0
+	var err error = nil
+
+	stream := AsWriteOps(p, off, int(rEADSIZE))
+	for i := range stream {
+		currWritten, err := f.doWrite(stream[i])
+		if currWritten < len(stream[i].what) {
+			err = io.ErrShortWrite
+		}
+		written += currWritten
+		if err != nil {
+			break
+		}
+	}
+
+	return written, err
+}
+
+func (f *FoundationDbFile) doWrite(op writeOp) (int, error) {
+	//writes exactly writeOp
+
+	// TODO needs implementation
 
 	return 0, nil
 }
