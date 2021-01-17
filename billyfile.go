@@ -85,20 +85,32 @@ type writeOp struct {
 
 //this function splits given byte slice into number of write operations
 func AsWriteOps(p []byte, off int64, writeSize int) (stream []writeOp) {
-	stream = make([]writeOp, len(p)/writeSize+1)
+
+	shift := int(off % int64(writeSize))
+	times := (len(p) + shift) / writeSize
+	reminder := (len(p) + shift) % writeSize
+	if reminder > 0 {
+		times += 1
+	}
+	stream = make([]writeOp, times)
+	var writeOpStart = 0
 
 	for i := range stream {
-		loSet := off + int64(i*writeSize)
 
-		key, _, start := findPosition(loSet)
-
-		//most likely calculations for start / end are slightly off
-
-		end := (i+1)*writeSize - start
-		if end > len(p) {
-			end = len(p)
+		key, _, start := findPosition(off, int64(writeSize))
+		toWrite := writeSize
+		if i == 0 && shift > 0 {
+			toWrite -= shift
 		}
-		stream[i] = writeOp{p[i*writeSize : end], key, start, writeSize}
+
+		writeOpEnd := writeOpStart + toWrite
+		if writeOpEnd > len(p) {
+			writeOpEnd = len(p)
+		}
+		data := p[writeOpStart:writeOpEnd]
+		writeOpStart = writeOpEnd
+		off += int64(len(data))
+		stream[i] = writeOp{data, key, start, writeSize}
 	}
 
 	return stream
@@ -136,9 +148,9 @@ func (f *FoundationDbFile) doWrite(op writeOp) (int, error) {
 	return 0, nil
 }
 
-func findPosition(off int64) (key tuple.Tuple, upperBound tuple.Tuple, bucketStart int) {
-	var startBucket = off / rEADSIZE
-	var bucketOffset = int(off % rEADSIZE)
+func findPosition(off int64, readSz int64) (key tuple.Tuple, upperBound tuple.Tuple, bucketStart int) {
+	var startBucket = off / readSz
+	var bucketOffset = int(off % readSz)
 
 	return tuple.Tuple{0xFD, 0x00, startBucket}, tuple.Tuple{0xFD, 0x01}, bucketOffset
 }
@@ -150,7 +162,7 @@ type readOp struct {
 
 // ReadAt function that is directly compatible with stateless NFS
 func (f *FoundationDbFile) ReadAt(p []byte, off int64) (d int, e error) {
-	var tuPack, up, slice = findPosition(off)
+	var tuPack, up, slice = findPosition(off, rEADSIZE)
 	key := (*f.sp).Pack(tuPack)
 	upper := (*f.sp).Pack(up)
 
