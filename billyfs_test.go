@@ -75,6 +75,21 @@ func (s *FsTestSuite) TestCanCreateDirAndSeesIt() {
 
 }
 
+func (s *FsTestSuite) TestCreateFile() {
+
+	s.fdbfs.MkdirAll("/foo/bar", os.ModeDir|os.ModePerm)
+	file, err := s.fdbfs.Create("/foo/bar")
+	s.Assert().Empty(err, "No Errors")
+	toWrite := []byte{0xff, 0x00, 0x20}
+	n, err := file.Write(toWrite)
+	s.Assert().Empty(err, "No errors")
+	s.Assert().Equal(len(toWrite), n, "Expected len bytes written")
+	reads := make([]byte, 1024)
+	n, err = file.ReadAt(reads, 0)
+	s.Assert().Equal(toWrite, reads[0:n], "Expected same data")
+
+}
+
 func (s *FsTestSuite) TestFewNestedDirs() {
 	s.fdbfs.MkdirAll("/foo/bar", os.ModeDir|os.ModePerm)
 	s.fdbfs.MkdirAll("/foo/baz", os.ModeDir|os.ModePerm)

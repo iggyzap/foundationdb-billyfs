@@ -43,7 +43,11 @@ func NewFile(fs *FoundationDbFs, path string, flag int, perm os.FileMode) (*Foun
 
 	})
 
-	return file.(*FoundationDbFile), err
+	if err != nil {
+		return nil, err
+	}
+
+	return file.(*FoundationDbFile), nil
 }
 
 // Open does nothing
@@ -142,10 +146,29 @@ func (f *FoundationDbFile) WriteAt(p []byte, off int64) (int, error) {
 
 func (f *FoundationDbFile) doWrite(op writeOp) (int, error) {
 	//writes exactly writeOp
+	partial := len(op.what) != op.pageSize
 
-	// TODO needs implementation
+	_, err := f.fs.db.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
+		key := (*f.sp).Pack(op.key)
+		if !partial {
+			tx.Set(key, op.what)
+		} else {
 
-	return 0, nil
+			//another option is to run 2 bit operations, 1 zeroing bits for writing,
+			// 2nd setting bits to be written
+			// partial write is funky!
+
+			// this is not correct at all
+			var data []byte
+			data, err = tx.Get(key).Get()
+			copy(data[op.offset:], op.what)
+			tx.Set(key, data)
+		}
+
+		return nil, err
+	})
+
+	return len(op.what), err
 }
 
 func findPosition(off int64, readSz int64) (key tuple.Tuple, upperBound tuple.Tuple, bucketStart int) {
@@ -186,7 +209,7 @@ func (f *FoundationDbFile) ReadAt(p []byte, off int64) (d int, e error) {
 	bytes = bytes[slice:]
 
 	//todo return EOF. funky!
-	d = copy(bytes, p)
+	d = copy(p, bytes)
 	if err == nil {
 		//check for EOF condition
 		// if we fully transferred bytes from last available bucket
@@ -204,7 +227,10 @@ func (*FoundationDbFile) Seek(offset int64, i int) (int64, error) {
 }
 
 // Truncate truncates file
-func (*FoundationDbFile) Truncate(size int64) error {
+func (f *FoundationDbFile) Truncate(size int64) error {
+
+	//truncate operation is 2-fold. if we are not on exact range, then drop keys from next bucket and
+	// do bitwise and with reduced length of current bucket.
 	return nil
 }
 
