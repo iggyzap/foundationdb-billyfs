@@ -147,6 +147,9 @@ func (f *FoundationDbFile) WriteAt(p []byte, off int64) (int, error) {
 func (f *FoundationDbFile) doWrite(op writeOp) (int, error) {
 	//writes exactly writeOp
 	partial := len(op.what) != op.pageSize
+	if len(op.what)+op.offset > op.pageSize {
+		return 0, fmt.Errorf("error_wrong_write_size Size:%v Want:%v", op.pageSize, len(op.what)+op.offset)
+	}
 
 	_, err := f.fs.db.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
 		key := (*f.sp).Pack(op.key)
@@ -158,11 +161,41 @@ func (f *FoundationDbFile) doWrite(op writeOp) (int, error) {
 			// 2nd setting bits to be written
 			// partial write is funky!
 
-			// this is not correct at all
+			// expand & combine
+			// ----- <- pageSize
+			// --    <- data
+			//  --   <- op.what
+
+			// ----- <- pageSize
+			// ----- <- data
+			//  ---- <- op.what
+
+			// ----- <- pageSize
+			// ----- <- data
+			// --    <- op.what --> trim?
+
+			// ----- <- pageSize
+			// ----- <- data
+			//  --   <- op.what --> trim 2 & combine
+
 			var data []byte
 			data, err = tx.Get(key).Get()
-			copy(data[op.offset:], op.what)
-			tx.Set(key, data)
+
+			var buff []byte
+
+			switch {
+			//trim
+			case op.offset == 0:
+				buff = op.what
+				break
+			case len(op.what)+op.offset < op.pageSize:
+				buff = make([]byte, len(op.what)+op.offset)
+				copy(buff, data[0:op.offset])
+				copy(buff[op.offset:], op.what)
+				break
+			}
+
+			tx.Set(key, buff)
 		}
 
 		return nil, err
