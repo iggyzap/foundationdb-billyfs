@@ -144,17 +144,18 @@ func (f *FoundationDbFile) WriteAt(p []byte, off int64) (int, error) {
 	return written, err
 }
 
-func (f *FoundationDbFile) doWrite(op writeOp) (int, error) {
-	//writes exactly writeOp
-	partial := len(op.what) != op.pageSize
-	if len(op.what)+op.offset > op.pageSize {
-		return 0, fmt.Errorf("error_wrong_write_size Size:%v Want:%v", op.pageSize, len(op.what)+op.offset)
-	}
-
-	_, err := f.fs.db.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
-		key := (*f.sp).Pack(op.key)
+//in theory this function is much more testable as doWrite since it does not need to be part of file.
+// it needs just a key and write op data
+func asWrite(key fdb.Key, op writeOp) func(fdb.Transaction) (interface{}, error) {
+	return func(tx fdb.Transaction) (ret interface{}, err error) {
+		partial := len(op.what) != op.pageSize
+		if len(op.what)+op.offset > op.pageSize {
+			return 0, fmt.Errorf("error_wrong_write_size Size:%v Want:%v", op.pageSize, len(op.what)+op.offset)
+		}
+		ret = 0
 		if !partial {
 			tx.Set(key, op.what)
+			ret = len(op.what)
 		} else {
 
 			//another option is to run 2 bit operations, 1 zeroing bits for writing,
@@ -162,20 +163,29 @@ func (f *FoundationDbFile) doWrite(op writeOp) (int, error) {
 			// partial write is funky!
 
 			// expand & combine
+			// A merge
 			// ----- <- pageSize
 			// --    <- data
 			//  --   <- op.what
 
+			// B merge
 			// ----- <- pageSize
 			// ----- <- data
 			//  ---- <- op.what
 
+			// C
 			// ----- <- pageSize
 			// ----- <- data
 			// --    <- op.what --> trim?
 
+			// D
 			// ----- <- pageSize
 			// ----- <- data
+			//  --   <- op.what --> trim 2 & combine
+
+			// E
+			// ----- <- pageSize
+			// ----  <- data
 			//  --   <- op.what --> trim 2 & combine
 
 			var data []byte
@@ -184,24 +194,32 @@ func (f *FoundationDbFile) doWrite(op writeOp) (int, error) {
 			var buff []byte
 
 			switch {
-			//trim
+			//trim C
 			case op.offset == 0:
 				buff = op.what
+				ret = len(op.what)
 				break
-			case len(op.what)+op.offset < op.pageSize:
+			default: // A,B,D,E
 				buff = make([]byte, len(op.what)+op.offset)
 				copy(buff, data[0:op.offset])
-				copy(buff[op.offset:], op.what)
+				ret = copy(buff[op.offset:], op.what)
 				break
 			}
 
 			tx.Set(key, buff)
 		}
 
-		return nil, err
-	})
+		return ret, err
+	}
 
-	return len(op.what), err
+}
+
+func (f *FoundationDbFile) doWrite(op writeOp) (int, error) {
+	//writes exactly writeOp
+
+	written, err := f.fs.db.Transact(asWrite((*f.sp).Pack(op.key), op))
+
+	return written.(int), err
 }
 
 func findPosition(off int64, readSz int64) (key tuple.Tuple, upperBound tuple.Tuple, bucketStart int) {
