@@ -211,8 +211,16 @@ func (f *FoundationDbFile) ReadAt(p []byte, off int64) (d int, e error) {
 }
 
 // Seek is not compatible with NFSv3 Only makes sense in context of writing because Write is stateful
-func (*FoundationDbFile) Seek(offset int64, i int) (int64, error) {
-	return 0, nil
+func (f *FoundationDbFile) Seek(offset int64, i int) (int64, error) {
+	switch i {
+	case io.SeekStart:
+		f.data.pos = offset
+	case io.SeekCurrent:
+		f.data.pos += offset
+	case io.SeekEnd:
+		return 0, fmt.Errorf("end_file_seek_not_supported, %v", offset)
+	}
+	return f.data.pos, nil
 }
 
 // Truncate truncates file

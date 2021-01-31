@@ -1,10 +1,12 @@
 package billyfs
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"testing"
 	"time"
@@ -78,6 +80,7 @@ func (s *FsTestSuite) TestCanCreateDirAndSeesIt() {
 func (s *FsTestSuite) TestCreateFile() {
 
 	s.fdbfs.MkdirAll("/foo/bar", os.ModeDir|os.ModePerm)
+	//in reality, mkdir all for full path should not be needed. We should need to have /foo prefix in place
 	file, err := s.fdbfs.Create("/foo/bar")
 	s.Assert().Empty(err, "No Errors")
 	toWrite := []byte{0xff, 0x00, 0x20}
@@ -87,6 +90,28 @@ func (s *FsTestSuite) TestCreateFile() {
 	reads := make([]byte, 1024)
 	n, err = file.ReadAt(reads, 0)
 	s.Assert().Equal(toWrite, reads[0:n], "Expected same data")
+
+}
+
+func (s *FsTestSuite) TestReadWriteFullFile() {
+
+	//let's try 65k
+	rndContent := make([]byte, 65536)
+
+	rand.Read(rndContent)
+	s.fdbfs.MkdirAll("/foo/bar", os.ModeDir|os.ModePerm)
+	file, err := s.fdbfs.Create("/foo/bar")
+	s.Assert().Empty(err, "No Errors")
+
+	w, err := io.Copy(file, bytes.NewReader(rndContent))
+	s.Assert().Equal(int64(len(rndContent)), w, "All bytes are written to file")
+
+	file.Seek(0, io.SeekStart)
+
+	read, err := ioutil.ReadAll(file)
+
+	s.Assert().Equal(len(rndContent), len(read), "Number of bytes read")
+	s.Assert().Equal(rndContent, read, "Number of bytes read")
 
 }
 
